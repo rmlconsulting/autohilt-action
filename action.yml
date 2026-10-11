@@ -1,0 +1,89 @@
+# autoHILT — run hardware tests from a GitHub Actions build (2026-10-11,
+# BACKLOG 95). One step: the build says what to test the way a person would
+# in Slack, the server picks the hardware (production stations only — the
+# CI token never reaches a dev machine), the run waits its turn behind a
+# reservation or a running test, and the step ends with the verdict: the job
+# fails on a failed test, the summary tab carries the table, and the outputs
+# below carry the facts. The engine's `autohilt run` is what runs — the same
+# verb from a terminal — so there is ONE client of the batch doors.
+#
+#   - uses: rmlconsulting/autohilt-action@v1
+#     with:
+#       run: smoke on 2 units
+#       token: ${{ secrets.AUTOHILT_TOKEN }}
+#
+# A test admin mints the token on Admin -> CI access and stores it as the
+# repository secret; it belongs to the company, so it outlives any one
+# person's membership.
+name: autoHILT run
+description: Run hardware tests on your autoHILT fleet and wait for the verdict
+branding:
+  icon: cpu
+  color: green
+inputs:
+  run:
+    description: 'What to run, as you would say it: "smoke on 2 units", "product:widget on all", "-k uart on station-004"'
+    required: true
+  token:
+    description: The company CI token (AUTOHILT_TOKEN repository secret, minted on Admin -> CI access)
+    required: true
+  ref:
+    description: The commit to test; the build's commit by default
+    required: false
+    default: ${{ github.sha }}
+  server:
+    description: Your autoHILT server
+    required: false
+    default: https://autohilt.com
+  timeout:
+    description: How long to wait for the verdict (90s, 10m, 1h)
+    required: false
+    default: 60m
+  cancel_on_timeout:
+    description: At the bound, cancel what has not started and report what finished (true); or leave the runs queued (false)
+    required: false
+    default: "true"
+  engine:
+    description: Which engine to run — a PyPI requirement (the default asks for an engine that has `autohilt run`) or a path to a wheel
+    required: false
+    default: autohilt>=0.9.0
+outputs:
+  batch_id:
+    description: The batch the request became
+    value: ${{ steps.run.outputs.batch_id }}
+  verdict:
+    description: passed | failed | unrunnable | canceled | timeout | interrupted
+    value: ${{ steps.run.outputs.verdict }}
+  passed:
+    description: Runs that passed
+    value: ${{ steps.run.outputs.passed }}
+  failed:
+    description: Runs that failed
+    value: ${{ steps.run.outputs.failed }}
+  url:
+    description: The Runs page
+    value: ${{ steps.run.outputs.url }}
+runs:
+  using: composite
+  steps:
+    - name: uv (the engine's toolchain)
+      uses: astral-sh/setup-uv@v6
+    - name: autohilt run
+      id: run
+      shell: bash
+      env:
+        AUTOHILT_CI_TOKEN: ${{ inputs.token }}
+        AUTOHILT_SERVER: ${{ inputs.server }}
+        AH_RUN_REQUEST: ${{ inputs.run }}
+        AH_RUN_REF: ${{ inputs.ref }}
+        AH_RUN_TIMEOUT: ${{ inputs.timeout }}
+        AH_RUN_CANCEL: ${{ inputs.cancel_on_timeout }}
+        AH_RUN_ENGINE: ${{ inputs.engine }}
+      run: |
+        set -u
+        policy=--cancel-on-timeout
+        case "$AH_RUN_CANCEL" in false|False|FALSE|0|no) policy=--no-cancel-on-timeout;; esac
+        # the request is one argument (never re-split by the shell); the
+        # engine comes from PyPI by requirement, or a wheel by path
+        uvx --from "$AH_RUN_ENGINE" autohilt run "$AH_RUN_REQUEST" \
+          --ref "$AH_RUN_REF" --timeout "$AH_RUN_TIMEOUT" "$policy"
