@@ -36,23 +36,27 @@ inputs:
     required: false
     default: https://autohilt.com
   timeout:
-    description: How long to wait for the verdict (90s, 10m, 1h)
+    description: How long to wait for the verdict (90s, 10m, 1h). Empty = as long as the run may take — the profile's timeout + grace + 5 min (engine 0.10.0+), or 60m for a request with no profile
     required: false
-    default: 60m
+    default: ""
+  max_wait:
+    description: How long the runs may wait in autoHILT's queue for a unit before they end (2h, 30 minutes, 1d). Empty = on a GitHub-hosted runner, what its 6 h job has left after the profile's allowable time (a profile that cannot fit is refused at once); on a self-hosted runner, autoHILT's default (24 h)
+    required: false
+    default: ""
   cancel_on_timeout:
-    description: At the bound, cancel what has not started and report what finished (true); or leave the runs queued (false)
+    description: At the bound, cancel the request — what has not started never starts, and a run already on a machine stops cleanly, keeping the tests that finished (true); or leave the runs queued (false)
     required: false
     default: "true"
   engine:
     description: Which engine to run — a PyPI requirement (the default asks for an engine that has `autohilt run`) or a path to a wheel
     required: false
-    default: autohilt>=0.9.0
+    default: autohilt>=0.10.1
 outputs:
   batch_id:
     description: The batch the request became
     value: ${{ steps.run.outputs.batch_id }}
   verdict:
-    description: passed | failed | unrunnable | canceled | timeout | interrupted
+    description: passed | failed | empty (no tests matched — the job passes with a warning) | unrunnable | canceled | timeout | interrupted
     value: ${{ steps.run.outputs.verdict }}
   passed:
     description: Runs that passed
@@ -79,11 +83,26 @@ runs:
         AH_RUN_TIMEOUT: ${{ inputs.timeout }}
         AH_RUN_CANCEL: ${{ inputs.cancel_on_timeout }}
         AH_RUN_ENGINE: ${{ inputs.engine }}
+        AH_RUN_MAX_WAIT: ${{ inputs.max_wait }}
+        AH_RUNNER_ENV: ${{ runner.environment }}
       run: |
         set -u
         policy=--cancel-on-timeout
         case "$AH_RUN_CANCEL" in false|False|FALSE|0|no) policy=--no-cancel-on-timeout;; esac
         # the request is one argument (never re-split by the shell); the
         # engine comes from PyPI by requirement, or a wheel by path
-        uvx --from "$AH_RUN_ENGINE" autohilt run "$AH_RUN_REQUEST" \
-          --ref "$AH_RUN_REF" --timeout "$AH_RUN_TIMEOUT" "$policy"
+        # the wait is named only when the workflow named it; otherwise the
+        # engine waits as long as the profile allows (0.10.0)
+        # the queue's maximum wait rides the request's own sentence (the run
+        # grammar's `max wait` clause), so no engine change carries it: the
+        # workflow's own, or on a GitHub-hosted runner what its 6 h job has
+        # left, which the server works out from the profile
+        request=$AH_RUN_REQUEST
+        if [ -n "$AH_RUN_MAX_WAIT" ]; then
+          request="$request max wait $AH_RUN_MAX_WAIT"
+        elif [ "$AH_RUNNER_ENV" = github-hosted ]; then
+          request="$request max wait github-hosted"
+        fi
+        set -- --ref "$AH_RUN_REF" "$policy"
+        [ -n "$AH_RUN_TIMEOUT" ] && set -- "$@" --timeout "$AH_RUN_TIMEOUT"
+        uvx --from "$AH_RUN_ENGINE" autohilt run "$request" "$@"

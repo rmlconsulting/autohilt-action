@@ -18,7 +18,13 @@ jobs:
 ```
 
 - **`run`** is the request as you would say it to the Slack bot: `smoke on
-  2 units`, `product:widget on all`, `-k uart on station-004`, `nightly 3x`.
+  2 units`, `product:widget on all`, `-k uart on station-004`, `nightly 3x`,
+  `smoke 6x leaving 3 units free`. `on a and b` runs it on both; `on a
+  or b` runs it once on whichever is free first. Runs with no unit named
+  are not assigned up front: each starts on the first unit that can run
+  it and is free, `3x` is three runs in all, `on 2 units` is at most two
+  at a time, and `leaving 3 units free` never takes the fleet's last
+  three (free: reserved by nobody, nothing running, nobody logged in).
   The build's commit is pinned (`ref`, the build's sha by default); the
   machines fetch it, run, and restore their checkout.
 - **`token`** is the company's CI token: a test admin mints it on

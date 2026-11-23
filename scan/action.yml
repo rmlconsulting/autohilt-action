@@ -1,0 +1,62 @@
+# autoHILT scan - which parts of the rig each test needs, reported from the
+# test repository's own GitHub Actions (parts before placement, car 7;
+# docs/spikes/parts-before-placement.md 5.7 source 2). The workflow
+# `autohilt init` writes runs it on every push (Linux) and autoHILT starts it
+# on Windows or macOS when a run needs a scan there:
+#
+#   - uses: rmlconsulting/autohilt-action/scan@v1
+#
+# The job's GitHub token signs the report (the workflow grants
+# `id-token: write`), so there is no secret. The scan collects the tests and
+# runs none of them; the engine's audit hook refuses hardware access during a
+# scan. Ryan 2026-11-15: "what can we do to minimize the install and setup
+# time and number of steps for the scanning" - so three steps: the commit
+# alone (depth 1 is the whole tree at that commit, only older history is
+# skipped), uv for Python and the engine (never pip, never setup-python), and
+# the scan. The repository's own dependencies are never installed: the scan's
+# stand-ins cover their imports.
+name: autoHILT scan
+description: Report which rig parts each test needs, so autoHILT runs a test only on a unit that has them
+branding:
+  icon: search
+  color: green
+inputs:
+  path:
+    description: The test tree's folder in the repository (where autohilt.toml is)
+    required: false
+    default: "."
+  server:
+    description: Your autoHILT server; empty = the one the tree's autohilt.toml names
+    required: false
+    default: ""
+  python:
+    description: The Python the scan runs under (uv finds it on the runner or downloads it)
+    required: false
+    default: "3.12"
+  engine:
+    description: Which engine to run - a PyPI requirement (the default asks for an engine that has `autohilt scan`) or a path to a wheel
+    required: false
+    default: autohilt>=0.16.0
+runs:
+  using: composite
+  steps:
+    - name: checkout (this commit only)
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 1
+        persist-credentials: false
+    - name: uv (the engine's toolchain)
+      uses: astral-sh/setup-uv@v6
+      with:
+        enable-cache: false
+    - name: autohilt scan --report
+      shell: bash
+      working-directory: ${{ inputs.path }}
+      env:
+        AH_SCAN_SERVER: ${{ inputs.server }}
+        AH_SCAN_PYTHON: ${{ inputs.python }}
+        AH_SCAN_ENGINE: ${{ inputs.engine }}
+      run: |
+        set -u
+        if [ -n "$AH_SCAN_SERVER" ]; then export AUTOHILT_SERVER="$AH_SCAN_SERVER"; fi
+        uvx --python "$AH_SCAN_PYTHON" --from "$AH_SCAN_ENGINE" autohilt scan --report
